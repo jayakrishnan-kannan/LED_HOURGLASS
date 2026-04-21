@@ -22,7 +22,8 @@ void MAX7219_Init(Max7219_HandleTypeDef *dev, SPI_HandleTypeDef *hspi,
     dev->cs_port = cs_port;
     dev->cs_pin = cs_pin;
     dev->num_devices = (num_devices > 8) ? 8 : num_devices;
-    dev->rotation = 0;
+    dev->rotation = 90;
+    dev->inverted_matrix = 0;
     memset(dev->status, 0, sizeof(dev->status));
 
     HAL_GPIO_WritePin(cs_port, cs_pin, GPIO_PIN_SET);
@@ -42,28 +43,33 @@ void MAX7219_SetRotation(Max7219_HandleTypeDef *dev, int rot) {
 }
 
 // Simple coordinate transformation (same logic as original)
-static void transform_coord(int rotation, uint8_t *x, uint8_t *y) {
+static void transform_coord(Max7219_HandleTypeDef *dev,uint8_t addr, uint8_t *x, uint8_t *y) {
     uint8_t tx = *x, ty = *y;
-    if (rotation == 90) {
+    if (dev->rotation == 90) {
         *x = ty;
         *y = 7 - tx;
-    } else if (rotation == 180) {
+    } else if (dev->rotation == 180) {
         *x = 7 - tx;
         *y = 7 - ty;
-    } else if (rotation == 270) {
+    } else if (dev->rotation == 270) {
         *x = 7 - ty;
         *y = tx;
     }
     // 0° = no change
+    // Extra 180° for the physically inverted matrix
+        if (dev->inverted_matrix == addr) {
+            *x = 7 - *x;
+            *y = 7 - *y;
+        }
 }
 
 void MAX7219_SetXY(Max7219_HandleTypeDef *dev, uint8_t addr, uint8_t x, uint8_t y, uint8_t state) {
-    transform_coord(dev->rotation, &x, &y);
+    transform_coord(dev,addr, &x, &y);
     MAX7219_SetRawXY(dev, addr, x, y, state);
 }
 
 uint8_t MAX7219_GetXY(Max7219_HandleTypeDef *dev, uint8_t addr, uint8_t x, uint8_t y) {
-    transform_coord(dev->rotation, &x, &y);
+    transform_coord(dev,addr, &x, &y);
     return MAX7219_GetRawXY(dev, addr, x, y);
 }
 

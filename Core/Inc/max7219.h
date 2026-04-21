@@ -27,6 +27,7 @@ typedef struct {
     uint8_t num_devices;
     uint8_t status[64];        // 8 bytes per device × 8 devices max
     int rotation;
+    uint8_t inverted_matrix;
 } Max7219_HandleTypeDef;
 
 void MAX7219_Init(Max7219_HandleTypeDef *dev, SPI_HandleTypeDef *hspi,

@@ -116,11 +116,13 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   MAX7219_Init(&lc, &hspi1, CS_GPIO_PORT, CS_PIN, 2);
+        lc.inverted_matrix = MATRIX_A;
 
         MAX7219_Shutdown(&lc,MATRIX_A,false);
         MAX7219_Shutdown(&lc,MATRIX_B,false);
         MAX7219_SetIntensity(&lc,MATRIX_A,1);
         MAX7219_SetIntensity(&lc,MATRIX_B,1);
+
     	srand(millis());        // or better random source
 
         resetTime();

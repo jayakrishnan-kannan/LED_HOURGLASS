@@ -45,6 +45,7 @@ typedef struct {
     uint32_t interval;
 } NonBlockDelay_t;
 
+
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -69,8 +70,8 @@ extern I2C_HandleTypeDef hi2c1;
 #define BUZZER_PIN      GPIO_PIN_0
 
 // Original defines
-#define MATRIX_A 1
-#define MATRIX_B 0
+#define MATRIX_A 0
+#define MATRIX_B 1
 #define ACC_THRESHOLD_LOW  300
 #define ACC_THRESHOLD_HIGH 360
 #define DELAY_FRAME        100

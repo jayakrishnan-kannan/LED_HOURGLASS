@@ -1,12 +1,12 @@
-/* functions.c - FIXED VERSION */
+/* functions.c - FIXED VERSION v2 */
 #include "main.h"
 #include "max7219.h"
 #include <stdlib.h>
 
-uint8_t delayHours = 0;
+uint8_t delayHours   = 0;
 uint8_t delayMinutes = 1;
-int gravity = 0;
-bool alarmWentOff = false;
+int     gravity      = 0;
+bool    alarmWentOff = false;
 NonBlockDelay_t drop_delay;
 
 struct coord {
@@ -14,78 +14,213 @@ struct coord {
     uint8_t y;
 };
 
-// ==================== COORDINATE HELPERS ====================
-struct coord getDown(uint8_t x, uint8_t y)  { struct coord c = {x-1, y+1}; return c; }
-struct coord getLeft(uint8_t x, uint8_t y)  { struct coord c = {x-1, y};   return c; }
-struct coord getRight(uint8_t x, uint8_t y) { struct coord c = {x, y+1};   return c; }
+// ==================== GRAVITY-AWARE DIRECTION HELPERS ====================
+// "Down"  = direction gravity pulls sand
+// "Left"  = one of the two lateral neighbours sand can slide to
+// "Right" = the other lateral neighbour
 
-// ==================== MOVEMENT CHECKS ====================
-uint8_t canGoLeft(uint8_t addr, uint8_t x, uint8_t y) {
-    if (x == 0) return 0;
-    return !MAX7219_GetXY(&lc, addr, getLeft(x,y).x, getLeft(x,y).y);
+static struct coord getDownDirection(uint8_t x, uint8_t y) {
+    struct coord c;
+    switch (gravity) {
+        case 90:  c.x = x - 1; c.y = y;     break;  // tilt right  → sand goes -x
+        case 180: c.x = x;     c.y = y - 1; break;  // upside-down → sand goes -y
+        case 270: c.x = x + 1; c.y = y;     break;  // tilt left   → sand goes +x
+        default:  c.x = x;     c.y = y + 1; break;  // normal      → sand goes +y
+    }
+    return c;
 }
 
-uint8_t canGoRight(uint8_t addr, uint8_t x, uint8_t y) {
-    if (y == 7) return 0;
-    return !MAX7219_GetXY(&lc, addr, getRight(x,y).x, getRight(x,y).y);
+static struct coord getLeftDirection(uint8_t x, uint8_t y) {
+    struct coord c;
+    switch (gravity) {
+        case 90:  c.x = x;     c.y = y - 1; break;
+        case 180: c.x = x - 1; c.y = y;     break;
+        case 270: c.x = x;     c.y = y + 1; break;
+        default:  c.x = x - 1; c.y = y;     break;
+    }
+    return c;
 }
 
-uint8_t canGoDown(uint8_t addr, uint8_t x, uint8_t y) {
-    if (y == 7 || x == 0) return 0;
-    if (!canGoLeft(addr, x, y)) return 0;
-    if (!canGoRight(addr, x, y)) return 0;
-    return !MAX7219_GetXY(&lc, addr, getDown(x,y).x, getDown(x,y).y);
+static struct coord getRightDirection(uint8_t x, uint8_t y) {
+    struct coord c;
+    switch (gravity) {
+        case 90:  c.x = x;     c.y = y + 1; break;
+        case 180: c.x = x + 1; c.y = y;     break;
+        case 270: c.x = x;     c.y = y - 1; break;
+        default:  c.x = x + 1; c.y = y;     break;
+    }
+    return c;
+}
+
+// ==================== BOUNDARY CHECK ====================
+// uint8_t wraps around on underflow (e.g. 0-1 = 255) - catch that
+static uint8_t coordValid(struct coord c) {
+    return (c.x < 8 && c.y < 8);
+}
+
+// ==================== GRAVITY-AWARE MOVEMENT CHECKS ====================
+static uint8_t canGoDown(uint8_t addr, uint8_t x, uint8_t y) {
+    struct coord next = getDownDirection(x, y);
+    if (!coordValid(next)) return 0;
+    return !MAX7219_GetXY(&lc, addr, next.x, next.y);
+}
+
+static uint8_t canGoLeft(uint8_t addr, uint8_t x, uint8_t y) {
+    struct coord next = getLeftDirection(x, y);
+    if (!coordValid(next)) return 0;
+    return !MAX7219_GetXY(&lc, addr, next.x, next.y);
+}
+
+static uint8_t canGoRight(uint8_t addr, uint8_t x, uint8_t y) {
+    struct coord next = getRightDirection(x, y);
+    if (!coordValid(next)) return 0;
+    return !MAX7219_GetXY(&lc, addr, next.x, next.y);
+}
+
+// Down-Left diagonal: down then left  (for diagonal sliding)
+static uint8_t canGoDownLeft(uint8_t addr, uint8_t x, uint8_t y) {
+    struct coord d = getDownDirection(x, y);
+    if (!coordValid(d)) return 0;
+    struct coord dl = getLeftDirection(d.x, d.y);
+    if (!coordValid(dl)) return 0;
+    return !MAX7219_GetXY(&lc, addr, dl.x, dl.y);
+}
+
+static uint8_t canGoDownRight(uint8_t addr, uint8_t x, uint8_t y) {
+    struct coord d = getDownDirection(x, y);
+    if (!coordValid(d)) return 0;
+    struct coord dr = getRightDirection(d.x, d.y);
+    if (!coordValid(dr)) return 0;
+    return !MAX7219_GetXY(&lc, addr, dr.x, dr.y);
 }
 
 // ==================== MOVE FUNCTIONS ====================
-void goDown(uint8_t addr, uint8_t x, uint8_t y) {
+static void goDown(uint8_t addr, uint8_t x, uint8_t y) {
+    struct coord next = getDownDirection(x, y);
     MAX7219_SetXY(&lc, addr, x, y, 0);
-    MAX7219_SetXY(&lc, addr, getDown(x,y).x, getDown(x,y).y, 1);
+    MAX7219_SetXY(&lc, addr, next.x, next.y, 1);
 }
 
-void goLeft(uint8_t addr, uint8_t x, uint8_t y) {
+static void goDownLeft(uint8_t addr, uint8_t x, uint8_t y) {
+    struct coord d  = getDownDirection(x, y);
+    struct coord dl = getLeftDirection(d.x, d.y);
     MAX7219_SetXY(&lc, addr, x, y, 0);
-    MAX7219_SetXY(&lc, addr, getLeft(x,y).x, getLeft(x,y).y, 1);
+    MAX7219_SetXY(&lc, addr, dl.x, dl.y, 1);
 }
 
-void goRight(uint8_t addr, uint8_t x, uint8_t y) {
+static void goDownRight(uint8_t addr, uint8_t x, uint8_t y) {
+    struct coord d  = getDownDirection(x, y);
+    struct coord dr = getRightDirection(d.x, d.y);
     MAX7219_SetXY(&lc, addr, x, y, 0);
-    MAX7219_SetXY(&lc, addr, getRight(x,y).x, getRight(x,y).y, 1);
+    MAX7219_SetXY(&lc, addr, dr.x, dr.y, 1);
 }
 
-// ==================== CORE PARTICLE FUNCTIONS ====================
+// ==================== CORE PARTICLE PHYSICS ====================
+// Sand physics:
+//   1. Try to fall straight down
+//   2. Try diagonal-down-left or diagonal-down-right (randomly ordered)
+//   3. Otherwise don't move (particle is settled)
 uint8_t moveParticle(uint8_t addr, uint8_t x, uint8_t y) {
     if (!MAX7219_GetXY(&lc, addr, x, y)) return 0;
 
-    uint8_t canLeft  = canGoLeft(addr, x, y);
-    uint8_t canRight = canGoRight(addr, x, y);
-
-    if (!canLeft && !canRight) return 0;
-
-    uint8_t canDown = canGoDown(addr, x, y);
-
-    if (canDown) {
+    // 1. Straight down
+    if (canGoDown(addr, x, y)) {
         goDown(addr, x, y);
-    } else if (canLeft && !canRight) {
-        goLeft(addr, x, y);
-    } else if (canRight && !canLeft) {
-        goRight(addr, x, y);
-    } else if (rand() % 2) {
-        goLeft(addr, x, y);
-    } else {
-        goRight(addr, x, y);
+        return 1;
     }
-    return 1;
+
+    // 2. Diagonal slides (real sand behaviour)
+    uint8_t dl = canGoDownLeft(addr, x, y);
+    uint8_t dr = canGoDownRight(addr, x, y);
+
+    if (dl && dr) {
+        if (rand() % 2) goDownLeft(addr, x, y);
+        else            goDownRight(addr, x, y);
+        return 1;
+    }
+    if (dl) { goDownLeft(addr, x, y);  return 1; }
+    if (dr) { goDownRight(addr, x, y); return 1; }
+
+    return 0;  // settled
 }
 
+// ==================== MATRIX SCAN ====================
+// We scan from gravity-bottom to gravity-top so settled particles
+// don't block falling ones in the same frame.
+uint8_t updateMatrix(void) {
+    uint8_t somethingMoved = 0;
+
+    // For each gravity direction, iterate rows from bottom→top
+    // gravity=0:   bottom = y=7, scan y from 7 down to 0
+    // gravity=180: bottom = y=0, scan y from 0 up to 7
+    // gravity=90:  bottom = x=0, scan x from 0 up to 7
+    // gravity=270: bottom = x=7, scan x from 7 down to 0
+
+    for (int8_t major = 7; major >= 0; major--) {
+        uint8_t dir = rand() % 2;  // randomise left/right order each row
+        for (int8_t minor = 0; minor < 8; minor++) {
+            uint8_t col = dir ? (uint8_t)minor : (uint8_t)(7 - minor);
+            uint8_t x, y;
+
+            switch (gravity) {
+                case 90:  x = (uint8_t)major;     y = col;            break;
+                case 180: x = col;                y = (uint8_t)(7 - major); break;
+                case 270: x = (uint8_t)(7 - major); y = col;          break;
+                default:  x = col;                y = (uint8_t)major; break; // gravity=0
+            }
+
+            if (moveParticle(MATRIX_B, x, y)) somethingMoved = 1;
+            if (moveParticle(MATRIX_A, x, y)) somethingMoved = 1;
+        }
+    }
+    return somethingMoved;
+}
+
+// ==================== HELPERS ====================
+uint32_t millis(void) {
+    return HAL_GetTick();
+}
+
+long getDelayDrop(void) {
+    return (long)delayMinutes + (long)delayHours * 60;
+}
+
+// Which matrix is physically on top (sand should start there)
+// gravity=0   → sand falls +y → MATRIX_A is top
+// gravity=180 → sand falls -y → MATRIX_B is top
+// gravity=90  → sand falls -x → MATRIX_A is top
+// gravity=270 → sand falls +x → MATRIX_B is top
+uint8_t getTopMatrix(void) {
+    return (gravity == 180 || gravity == 270) ? MATRIX_B : MATRIX_A;
+}
+
+uint8_t getBottomMatrix(void) {
+    return (getTopMatrix() == MATRIX_A) ? MATRIX_B : MATRIX_A;
+}
+
+// ==================== FILL ====================
+// Fill the top matrix from the gravity-bottom edge upward,
+// so sand looks like it has settled at the bottom of the top chamber.
 void fill(uint8_t addr, uint8_t maxcount) {
-    int count = 0;
-    for (uint8_t slice = 0; slice < 15; ++slice) {
-        uint8_t z = (slice < 8) ? 0 : slice - 7;
-        for (uint8_t j = z; j <= slice - z; ++j) {
-            uint8_t y = 7 - j;
-            uint8_t x = slice - j;
-            MAX7219_SetXY(&lc, addr, x, y, (++count <= maxcount));
+    uint8_t count = 0;
+
+    // We fill row by row from the gravity-bottom of the given matrix
+    // gravity=0: bottom of top matrix is y=7, fill upward
+    // gravity=180: bottom is y=0, fill downward (y increasing → away from bottom)
+    // gravity=90:  bottom is x=0, fill rightward
+    // gravity=270: bottom is x=7, fill leftward
+
+    for (int8_t major = 7; major >= 0 && count < maxcount; major--) {
+        for (int8_t minor = 0; minor < 8 && count < maxcount; minor++) {
+            uint8_t x, y;
+            switch (gravity) {
+                case 90:  x = (uint8_t)major;       y = (uint8_t)minor;       break;
+                case 180: x = (uint8_t)minor;        y = (uint8_t)(7 - major); break;
+                case 270: x = (uint8_t)(7 - major);  y = (uint8_t)minor;       break;
+                default:  x = (uint8_t)minor;        y = (uint8_t)major;       break;
+            }
+            MAX7219_SetXY(&lc, addr, x, y, 1);
+            count++;
         }
     }
 }
@@ -98,66 +233,90 @@ uint8_t countParticles(uint8_t addr) {
     return c;
 }
 
-uint8_t updateMatrix(void) {
-    uint8_t somethingMoved = 0;
-    for (uint8_t slice = 0; slice < 15; ++slice) {
-        uint8_t direction = rand() % 2;
-        uint8_t z = (slice < 8) ? 0 : slice - 7;
-        for (uint8_t j = z; j <= slice - z; ++j) {
-            uint8_t y = direction ? (7 - j) : (7 - (slice - j));
-            uint8_t x = direction ? (slice - j) : j;
-
-            if (moveParticle(MATRIX_B, x, y)) somethingMoved = 1;
-            if (moveParticle(MATRIX_A, x, y)) somethingMoved = 1;
-        }
-    }
-    return somethingMoved;
-}
-uint32_t millis(void) {
-	return HAL_GetTick();
-}
-
-long getDelayDrop(void) {
-    return (long)delayMinutes + delayHours * 60;
-}
-
-uint8_t getTopMatrix(void) {
-    return (gravity == 90) ? MATRIX_A : MATRIX_B;
-//    return MATRIX_A;
-
-}
-
+// ==================== RESET ====================
 void resetTime(void) {
-    MAX7219_ClearDisplay(&lc, 0);
-    MAX7219_ClearDisplay(&lc, 1);
-    fill(getTopMatrix(), 60);                    // ← This was missing!
-    drop_delay.start = HAL_GetTick();
+    MAX7219_ClearDisplay(&lc, MATRIX_A);
+    MAX7219_ClearDisplay(&lc, MATRIX_B);
+    fill(getTopMatrix(), 60);
+    drop_delay.start    = HAL_GetTick();
     drop_delay.interval = getDelayDrop() * 1000UL;
+    alarmWentOff = false;
 }
 
+// ==================== NECK PIXEL COORDINATES ====================
+// The "neck" is the single pixel that connects the two matrices.
+// In physical space, the two 8x8 matrices sit one above the other.
+// The bottom-most pixel of the top matrix feeds into the top-most pixel
+// of the bottom matrix.  Those raw pixel positions depend on gravity.
+//
+//   gravity=0:   top-matrix bottom row = y=7, centre x=3 or 4
+//                bottom-matrix top row = y=0, centre x=3 or 4
+//   gravity=180: top-matrix bottom row = y=0, centre x=3 or 4
+//                bottom-matrix top row = y=7, centre x=3 or 4
+//   gravity=90:  top-matrix bottom col = x=0, centre y=3 or 4
+//                bottom-matrix top col = x=7, centre y=3 or 4
+//   gravity=270: top-matrix bottom col = x=7, centre y=3 or 4
+//                bottom-matrix top col = x=0, centre y=3 or 4
+//
+// We use a single pixel at the centre of the neck for simplicity,
+// matching what the hardware hourglass neck physically does.
+
+typedef struct { uint8_t x; uint8_t y; } NeckPixel;
+
+static NeckPixel getNeckTop(void) {   // pixel in top matrix that drains out
+    NeckPixel p;
+    switch (gravity) {
+        case 90:  p.x = 0; p.y = 3; break;
+        case 180: p.x = 3; p.y = 0; break;
+        case 270: p.x = 7; p.y = 3; break;
+        default:  p.x = 3; p.y = 7; break;  // gravity=0
+    }
+    return p;
+}
+
+static NeckPixel getNeckBottom(void) {  // pixel in bottom matrix that receives
+    NeckPixel p;
+    switch (gravity) {
+        case 90:  p.x = 7; p.y = 3; break;
+        case 180: p.x = 3; p.y = 7; break;
+        case 270: p.x = 0; p.y = 3; break;
+        default:  p.x = 3; p.y = 0; break;  // gravity=0
+    }
+    return p;
+}
+
+// ==================== DROP PARTICLE (NECK TRANSFER) ====================
+// Each tick: if neck pixel of top matrix is occupied, move it to bottom matrix.
 uint8_t dropParticle(void) {
-    if (HAL_GetTick() - drop_delay.start >= drop_delay.interval) {
-        drop_delay.start = HAL_GetTick();
-        drop_delay.interval = getDelayDrop() * 1000UL;
+    if (HAL_GetTick() - drop_delay.start < drop_delay.interval) return 0;
 
-        if (gravity == 0 || gravity == 180) {
-            uint8_t top_has = MAX7219_GetRawXY(&lc, MATRIX_A, 0, 0);
-            uint8_t bot_has = MAX7219_GetRawXY(&lc, MATRIX_B, 7, 7);
+    drop_delay.start    = HAL_GetTick();
+    drop_delay.interval = getDelayDrop() * 1000UL;
 
-            if ((top_has && !bot_has) || (!top_has && bot_has)) {
-                MAX7219_InvertRawXY(&lc, MATRIX_A, 0, 0);   // Better to use Raw here
-                MAX7219_InvertRawXY(&lc, MATRIX_B, 7, 7);
+    uint8_t top = getTopMatrix();
+    uint8_t bot = getBottomMatrix();
 
-                HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
-                HAL_Delay(10);
-                HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
-                return 1;
-            }
-        }
+    NeckPixel nt = getNeckTop();
+    NeckPixel nb = getNeckBottom();
+
+    uint8_t top_has = MAX7219_GetXY(&lc, top, nt.x, nt.y);
+    uint8_t bot_has = MAX7219_GetXY(&lc, bot, nb.x, nb.y);
+
+    // Only transfer if top has a grain there and bottom neck is free
+    if (top_has && !bot_has) {
+        MAX7219_SetXY(&lc, top, nt.x, nt.y, 0);
+        MAX7219_SetXY(&lc, bot, nb.x, nb.y, 1);
+
+        // Short beep on each grain transfer
+        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+        HAL_Delay(5);
+        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+        return 1;
     }
     return 0;
 }
 
+// ==================== ALARM ====================
 void alarm(void) {
     for (int i = 0; i < 5; i++) {
         HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
