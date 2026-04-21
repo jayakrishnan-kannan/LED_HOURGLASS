@@ -1,5 +1,6 @@
-../Core/Src/lis3dh.c:10:13:LIS3DH_WriteReg	1
-../Core/Src/lis3dh.c:15:16:LIS3DH_ReadReg	1
-../Core/Src/lis3dh.c:22:9:LIS3DH_Init	2
-../Core/Src/lis3dh.c:41:6:LIS3DH_ReadRaw	1
-../Core/Src/lis3dh.c:55:5:LIS3DH_GetGravityDirection	9
+../Core/Src/lis3dh.c:23:13:reg_write	1
+../Core/Src/lis3dh.c:29:16:reg_read	1
+../Core/Src/lis3dh.c:37:12:abs16	1
+../Core/Src/lis3dh.c:43:9:LIS3DH_Init	2
+../Core/Src/lis3dh.c:70:6:LIS3DH_ReadRaw	1
+../Core/Src/lis3dh.c:95:5:LIS3DH_GetGravityDirection	7
