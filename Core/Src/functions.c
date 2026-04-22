@@ -1,17 +1,17 @@
 /*
  * functions.c  —  Hourglass sand-physics engine
  *
- * ════════════════════════════════════════════════════════════════════
+ * ═════════════════════════════════════════════════════════════════
  * OVERVIEW
- * ════════════════════════════════════════════════════════════════════
+ * ═════════════════════════════════════════════════════════════════
  *
  * Both matrices use the FULL 8×8 grid.  The physical diamond shape
  * is produced by the 45° PCB tilt — this file never clips or masks
  * pixels.  All 64 pixels of each matrix are valid positions for sand.
  *
- * ════════════════════════════════════════════════════════════════════
+ * ═════════════════════════════════════════════════════════════════
  * COORDINATE SYSTEM & DIRECTIONS
- * ════════════════════════════════════════════════════════════════════
+ * ═════════════════════════════════════════════════════════════════
  *
  * MATRIX A (top, addr 0)
  *   x = 0..7 left→right   y = 0..7 bottom-right→top-left
@@ -22,7 +22,7 @@
  *
  *   Let's be concrete with the layout:
  *     Top tip of A:    (0,7)  — x=0, y=7
- *     Bottom tip of A: (7,0)  — x=7, y=0  ← NECK EXIT
+ *     Bottom tip of A: (7,0)  — x=7, y=0  ← NECK EXIT ← THE NECK!
  *     Sand starts at top tip (0,7) and must reach (7,0).
  *     Each step "down": x+1, y-1  (moves diagonally down-right on screen)
  *     antidiag value k = (7-y) + x = x + (7-y)... simpler: use k = x - y
@@ -56,7 +56,7 @@
  *
  * MATRIX B (bottom, addr 1)
  *   x = 0..7 left→right   y = 0..7 top-left→bottom-right
- *   Top tip of B:    (7,0)  — NECK ENTRY
+ *   Top tip of B:    (7,0)  — NECK ENTRY ← SAND ENTERS HERE FROM A's (7,0)
  *   Bottom tip of B: (0,7)
  *   Sand enters at (7,0) and settles toward (0,7).
  *   "Settling" direction = toward (0,7) = x decreases, y increases
@@ -71,9 +71,9 @@
  *       slide L:  (x-1, y  )
  *       slide R:  (x,   y+1)
  *
- * ════════════════════════════════════════════════════════════════════
+ * ═════════════════════════════════════════════════════════════════
  * FILL ORDER
- * ════════════════════════════════════════════════════════════════════
+ * ═════════════════════════════════════════════════════════════════
  *
  * Fill Matrix A from the top tip down:
  *   Start at k=-7 (pixel (0,7)), fill k=-6,-5,...,7
@@ -82,9 +82,9 @@
  *
  * Matrix B starts empty; grains arrive via the neck and settle naturally.
  *
- * ════════════════════════════════════════════════════════════════════
+ * ═════════════════════════════════════════════════════════════════
  * GRAVITY=180 (device flipped, B now on top)
- * ════════════════════════════════════════════════════════════════════
+ * ═════════════════════════════════════════════════════════════════
  *
  * When flipped, B is on top.  Sand in B must fall toward B's bottom tip
  * (0,7).  The existing B physics (x-- y++) is correct for this direction.
@@ -259,31 +259,32 @@ static uint8_t hourglass_bottom_matrix(void)
 /*
  * Neck pixels (logical coords passed to MAX7219_GetXY/SetXY):
  *
- * gravity=0:
- *   A exit  = (7,0)  — bottom tip of A
- *   B entry = (7,0)  — top tip of B
+ * gravity=0 (NORMAL - A on top, B on bottom):
+ *   A exit  = (7,0)  — bottom tip of A, sand exits here
+ *   B entry = (7,0)  — top tip of B, sand enters here
  *
- * gravity=180 (flipped):
- *   B exit  = (0,7)  — B's bottom tip is now physically on top
- *   A entry = (0,7)  — A's top tip receives
+ * gravity=180 (FLIPPED - B on top, A on bottom):
+ *   B exit  = (0,7)  — bottom tip of B is now at the neck
+ *   A entry = (0,7)  — top tip of A receives sand
  *
- * Note: after hourglass_top_matrix() returns the correct source,
- * neck_exit() is for that matrix and neck_entry() is for the other.
+ * The neck is physically ONE PIXEL between the two matrices.
+ * From software POV: sand leaves top_matrix at its "exit point"
+ * and immediately appears in bottom_matrix at its "entry point".
  */
 typedef struct { uint8_t x; uint8_t y; } Pix;
 
 static Pix neck_exit(void)
 {
     /* Exit point of the TOP matrix */
-    if (gravity == 180) return (Pix){0,0};  /* B's bottom tip */
-    return (Pix){7,7};                       /* A's bottom tip */
+    if (gravity == 180) return (Pix){0, 7};  /* B's bottom tip */
+    return (Pix){7, 0};                       /* A's bottom tip */
 }
 
 static Pix neck_entry(void)
 {
     /* Entry point of the BOTTOM matrix */
-    if (gravity == 180) return (Pix){7,7};  /* A's top tip    */
-    return (Pix){0,0};                       /* B's top tip    */
+    if (gravity == 180) return (Pix){0, 7};  /* A's top tip    */
+    return (Pix){7, 0};                       /* B's top tip    */
 }
 
 uint8_t hourglass_drop(void)

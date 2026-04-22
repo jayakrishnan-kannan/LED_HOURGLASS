@@ -23,13 +23,21 @@
 
 #define MAX7219_NO_INVERT 0xFF
 
+typedef enum {
+    ROTATION_0   = 0,
+    ROTATION_90  = 90,
+    ROTATION_180 = 180,
+    ROTATION_270 = 270
+} MatrixRotation_t;
+
 typedef struct {
     SPI_HandleTypeDef *hspi;
     GPIO_TypeDef      *cs_port;
     uint16_t           cs_pin;
     uint8_t            num_devices;
-    uint8_t            status[64];     /* shadow RAM: status[addr*8+row] */
-    uint8_t            inverted_matrix;/* addr of 180°-rotated board, or 0xFF */
+    uint8_t            status[64];          /* shadow RAM: status[addr*8+row] */
+    uint8_t            inverted_matrix;     /* deprecated, use rotation field */
+    MatrixRotation_t   rotation[2];         /* per-matrix rotation: 0, 90, 180, 270 */
 } Max7219_HandleTypeDef;
 
 void    MAX7219_Init        (Max7219_HandleTypeDef *dev, SPI_HandleTypeDef *hspi,
@@ -43,6 +51,7 @@ uint8_t MAX7219_GetXY       (Max7219_HandleTypeDef *dev, uint8_t addr, uint8_t x
 void    MAX7219_InvertXY    (Max7219_HandleTypeDef *dev, uint8_t addr, uint8_t x, uint8_t y);
 
 void    MAX7219_Test_BlinkAll(Max7219_HandleTypeDef *dev);
+void MAX7219_SetRotation(Max7219_HandleTypeDef *dev, uint8_t addr, MatrixRotation_t rot);
 
 void make_pattern(Max7219_HandleTypeDef *dev,uint8_t matrix_id);
 

@@ -43,6 +43,9 @@ typedef struct {
 	uint32_t start;
 	uint32_t interval;
 } NonBlockDelay_t;
+
+
+
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -78,8 +81,12 @@ extern NonBlockDelay_t  drop_delay;
 #define MATRIX_A   0u   /* top    rhombus */
 #define MATRIX_B   1u   /* bottom rhombus */
 
-/* ── Physics constants ───────────────────────────────────────────── */
-#define SAND_GRAINS     6u   /* grains per chamber (≤ 64)   */
+/* ── Matrix Physical Rotations (adjust to match your PCB setup) ───── */
+#define MATRIX_A_ROTATION  ROTATION_270      /* MATRIX_A rotation */
+#define MATRIX_B_ROTATION  ROTATION_90    /* MATRIX_B rotation (180° from A) */
+
+/* ── Physics constants ─────��─────────────��───────────────────────── */
+#define SAND_GRAINS     35u   /* grains per chamber (≤ 64)   */
 #define DELAY_FRAME_MS  8u   /* main-loop period ms          */
 #define DEFAULT_HOURS   0u
 #define DEFAULT_MINUTES 1u

@@ -145,6 +145,16 @@ int main(void)
   MAX7219_Init(&lc, &hspi1, CS_PORT, CS_PIN, 2);
 
   /*
+   * Set individual matrix rotations based on physical PCB orientation.
+   * Adjust these values to match how your matrices are soldered:
+   *   ROTATION_0   = normal (0°)
+   *   ROTATION_90  = rotated 90° clockwise
+   *   ROTATION_180 = rotated 180° (upside down)
+   *   ROTATION_270 = rotated 270° clockwise
+   */
+  MAX7219_SetRotation(&lc, MATRIX_A, MATRIX_A_ROTATION);
+  MAX7219_SetRotation(&lc, MATRIX_B, MATRIX_B_ROTATION);
+  /*
    * inverted_matrix: set MATRIX_A if Matrix A is soldered 180° rotated.
    * Set MAX7219_NO_INVERT if neither board needs hardware inversion.
    */
