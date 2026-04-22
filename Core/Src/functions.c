@@ -1,140 +1,97 @@
 /*
- * functions.c  —  Diamond hourglass sand-physics engine
+ * functions.c  —  Hourglass sand-physics engine
  *
  * ════════════════════════════════════════════════════════════════════
- * THE DIAMOND COORDINATE SYSTEM
+ * OVERVIEW
  * ════════════════════════════════════════════════════════════════════
  *
- * Each 8×8 matrix is mounted at 45°, forming a rhombus (diamond).
- * The physics engine works in a "diamond logical space":
- *
- *   y = 0  →  1 pixel  wide  (top tip)
- *   y = 1  →  3 pixels wide
- *   y = 2  →  5 pixels wide
- *   y = 3  →  7 pixels wide
- *   y = 4  →  8 pixels wide  (widest row — equator of the diamond)
- *   y = 5  →  7 pixels wide
- *   y = 6  →  5 pixels wide
- *   y = 7  →  1 pixel  wide  (bottom tip = NECK EXIT for top matrix)
- *
- * Row y=4 has 8 pixels because the 45°-rotated 8×8 matrix has its
- * widest diagonal spanning 8 LEDs.  Rows above and below taper by 2
- * pixels per step, except the step from y=3 (7) to y=4 (8) which is +1.
- *
- * Row width formula:
- *   row_width(y) = 2*(y+1) - 1   for y = 0..3  → 1,3,5,7
- *   row_width(4) = 8
- *   row_width(y) = 2*(7-y) + 1   for y = 5..7  → 7,5,3,1
- *
- * Pixels in a row are x = 0 … row_width(y)-1.
- * x=0 is the leftmost pixel of the row.
+ * Both matrices use the FULL 8×8 grid.  The physical diamond shape
+ * is produced by the 45° PCB tilt — this file never clips or masks
+ * pixels.  All 64 pixels of each matrix are valid positions for sand.
  *
  * ════════════════════════════════════════════════════════════════════
- * DIAMOND → HARDWARE PIXEL MAPPING
+ * COORDINATE SYSTEM & DIRECTIONS
  * ════════════════════════════════════════════════════════════════════
  *
- * A 45°-rotated 8×8 grid maps its diagonals as rows:
+ * MATRIX A (top, addr 0)
+ *   x = 0..7 left→right   y = 0..7 bottom-right→top-left
+ *   "Gravity down" in A = toward the bottom tip = toward (7,0)
+ *     → x increases, y decreases
+ *     → on antidiagonals: antidiag k = x+y, sand moves from k=0 toward k=14
+ *       but "down" means x+y INCREASES (toward 7+0=7, then toward 7+0... wait)
  *
- *   Hardware (hw_x, hw_y) for diamond (dy, dx):
+ *   Let's be concrete with the layout:
+ *     Top tip of A:    (0,7)  — x=0, y=7
+ *     Bottom tip of A: (7,0)  — x=7, y=0  ← NECK EXIT
+ *     Sand starts at top tip (0,7) and must reach (7,0).
+ *     Each step "down": x+1, y-1  (moves diagonally down-right on screen)
+ *     antidiag value k = (7-y) + x = x + (7-y)... simpler: use k = x - y
+ *       at top tip (0,7): k = 0-7 = -7
+ *       at bottom tip (7,0): k = 7-0 = 7
+ *     "Down" = increasing (x-y). Each antidiag slice has constant (x-y).
  *
- *   The diamond's top tip is the hardware pixel at the top-right corner
- *   if the board is wired so row 0 = top and col 0 = left.
- *   With a 45° rotation:
- *     - Diamond row dy maps to the antidiagonal hw_x + hw_y = constant
- *     - Within that antidiagonal, dx indexes left-to-right
+ *   Antidiagonal slices for A (k = x - y, sand moves from k=-7 to k=7):
+ *     k=-7: (0,7)                                   — 1 pixel
+ *     k=-6: (0,6)(1,7)                              — 2 pixels
+ *     k=-5: (0,5)(1,6)(2,7)                         — 3 pixels
+ *     k=-4: (0,4)(1,5)(2,6)(3,7)                    — 4 pixels
+ *     k=-3: (0,3)(1,4)(2,5)(3,6)(4,7)               — 5 pixels
+ *     k=-2: (0,2)(1,3)(2,4)(3,5)(4,6)(5,7)          — 6 pixels
+ *     k=-1: (0,1)(1,2)(2,3)(3,4)(4,5)(5,6)(6,7)     — 7 pixels
+ *     k= 0: (0,0)(1,1)(2,2)(3,3)(4,4)(5,5)(6,6)(7,7)— 8 pixels (widest)
+ *     k= 1: (1,0)(2,1)(3,2)(4,3)(5,4)(6,5)(7,6)     — 7 pixels
+ *     k= 2: (2,0)(3,1)(4,2)(5,3)(6,4)(7,5)          — 6 pixels
+ *     k= 3: (3,0)(4,1)(5,2)(6,3)(7,4)               — 5 pixels
+ *     k= 4: (4,0)(5,1)(6,2)(7,3)                    — 4 pixels
+ *     k= 5: (5,0)(6,1)(7,2)                         — 3 pixels
+ *     k= 6: (6,0)(7,1)                              — 2 pixels
+ *     k= 7: (7,0)                                   — 1 pixel  NECK EXIT
  *
- *   Concretely, for a matrix with its top tip at hardware (0, 0)
- *   and rotated so the diamond fits:
+ *   Sand physics in A (gravity=0, down = k increases = x++ y--):
+ *     From (x,y), to move "down":
+ *       straight: (x+1, y-1)  — stays on same visual column of the diamond
+ *       slide L:  (x,   y-1)  — slides to left face
+ *       slide R:  (x+1, y  )  — slides to right face
+ *     All three targets must be in-bounds [0..7] and empty.
  *
- *   dy=0 (tip):    hw (3,0)  — but this assumes origin at the tip
+ * MATRIX B (bottom, addr 1)
+ *   x = 0..7 left→right   y = 0..7 top-left→bottom-right
+ *   Top tip of B:    (7,0)  — NECK ENTRY
+ *   Bottom tip of B: (0,7)
+ *   Sand enters at (7,0) and settles toward (0,7).
+ *   "Settling" direction = toward (0,7) = x decreases, y increases
+ *   antidiag k = x - y:
+ *     at (7,0): k = 7
+ *     at (0,7): k = -7
+ *   "Down" in B = k decreases (x--, y++).
  *
- *   Instead of this complex mapping, we use the per-matrix rotation
- *   in the MAX7219 driver to physically orient each board, and then
- *   work in the simple (col, row) space the driver expects.
- *
- *   With the 45° physical mounting, the hardware "rows" (as seen by
- *   the MAX7219 row registers) correspond to the diagonal slices of
- *   the diamond visible shape.  We define:
- *
- *     hw_row = dy                        (diamond row = hardware row)
- *     hw_col = dx + offset(dy)           (offset centres the row)
- *
- *   where offset(dy) = number of missing pixels on the left.
- *
- *   offset(dy):
- *     dy=0: offset=3  (tip at col 3)
- *     dy=1: offset=2  (cols 2,3,4)
- *     dy=2: offset=1  (cols 1,2,3,4,5)
- *     dy=3: offset=0  (cols 0..6)
- *     dy=4: offset=0  (cols 0..7)
- *     dy=5: offset=0  (cols 0..6)
- *     dy=6: offset=1  (cols 1..5)
- *     dy=7: offset=3  (col 3)
- *
- *   This mapping is implemented in diamond_to_hw() below.
- *
- *   The MAX7219 driver then applies rotation_a / rotation_b to
- *   convert these (hw_col, hw_row) → final physical LED address.
- *
- * ════════════════════════════════════════════════════════════════════
- * NECK PIXEL
- * ════════════════════════════════════════════════════════════════════
- *
- *   Matrix A bottom tip: diamond (dy=7, dx=0) → hw (col=3, row=7)
- *   Matrix B top tip:    diamond (dy=0, dx=0) → hw (col=3, row=0)
- *
- *   Both are the single-pixel tips at the centre of each board.
- *   The driver rotation maps these to the correct physical LED.
- *
- * ════════════════════════════════════════════════════════════════════
- * SAND PHYSICS IN DIAMOND SPACE
- * ════════════════════════════════════════════════════════════════════
- *
- *   Gravity=0 (upright):
- *     "Down" = increasing dy.
- *     From (dy, dx), a grain can move to:
- *       Straight down:   (dy+1, dx')   where dx' maps to same x position
- *       Diagonal left:   (dy+1, dx'-1) if in bounds
- *       Diagonal right:  (dy+1, dx'+1) if in bounds
- *
- *   The row width changes between rows, so "dx'" is the pixel in row dy+1
- *   that is directly below dx in row dy.  Because of the trapezoidal
- *   shape, this alignment is:
- *     In rows 0..3 (widening):  dx in row dy → dx in row dy+1 (same index,
- *                                but one extra pixel on the right each row)
- *                                "straight down" = dx+1 in the wider row
- *                                because the extra pixel is on the left? No —
- *     See alignment derivation below.
+ *   Sand physics in B (gravity=0, down = k decreases = x-- y++):
+ *     From (x,y), to move "down":
+ *       straight: (x-1, y+1)
+ *       slide L:  (x-1, y  )
+ *       slide R:  (x,   y+1)
  *
  * ════════════════════════════════════════════════════════════════════
- * ALIGNMENT OF DIAMOND ROWS
+ * FILL ORDER
  * ════════════════════════════════════════════════════════════════════
  *
- *  Visualising the diamond (all positions are hw column of each pixel):
+ * Fill Matrix A from the top tip down:
+ *   Start at k=-7 (pixel (0,7)), fill k=-6,-5,...,7
+ *   Within each k, fill all pixels in that antidiagonal.
+ *   Stop when SAND_GRAINS placed.
  *
- *  dy=0:           [3]                         1 pixel,  cols: 3
- *  dy=1:         [2,3,4]                       3 pixels, cols: 2..4
- *  dy=2:       [1,2,3,4,5]                     5 pixels, cols: 1..5
- *  dy=3:     [0,1,2,3,4,5,6]                   7 pixels, cols: 0..6
- *  dy=4:   [0,1,2,3,4,5,6,7]                   8 pixels, cols: 0..7
- *  dy=5:     [0,1,2,3,4,5,6]                   7 pixels, cols: 0..6
- *  dy=6:       [1,2,3,4,5]                     5 pixels, cols: 1..5
- *  dy=7:           [3]                         1 pixel,  cols: 3
+ * Matrix B starts empty; grains arrive via the neck and settle naturally.
  *
- *  offset[] = {3, 2, 1, 0, 0, 0, 1, 3}
+ * ════════════════════════════════════════════════════════════════════
+ * GRAVITY=180 (device flipped, B now on top)
+ * ════════════════════════════════════════════════════════════════════
  *
- *  For a grain at diamond position (dy, dx):
- *    hw_col = dx + offset[dy]
+ * When flipped, B is on top.  Sand in B must fall toward B's bottom tip
+ * (0,7).  The existing B physics (x-- y++) is correct for this direction.
+ * Sand in A (now bottom) receives grains at A's top tip (0,7).
  *
- *  The grain directly below it in row dy+1 has the SAME hw_col:
- *    dx_below = hw_col - offset[dy+1]
- *             = dx + offset[dy] - offset[dy+1]
- *
- *  So "move straight down" = move to (dy+1, dx + offset[dy] - offset[dy+1])
- *  Diagonal left  = (dy+1, dx + offset[dy] - offset[dy+1] - 1)
- *  Diagonal right = (dy+1, dx + offset[dy] - offset[dy+1] + 1)
- *
- *  All must be checked: 0 <= dx_new < row_width(dy+1)
+ * hourglass_top_matrix() returns MATRIX_B when gravity=180.
+ * neck_exit() and neck_entry() swap accordingly.
  */
 
 #include "main.h"
@@ -148,306 +105,269 @@ int             gravity      = 0;
 bool            alarmWentOff = false;
 NonBlockDelay_t drop_delay;
 
-/* ================================================================== */
-/* SECTION 1 — Diamond geometry tables                                 */
-/* ================================================================== */
+/* ── Helpers ─────────────────────────────────────────────────────── */
+static uint8_t in_bounds(int x, int y)
+{ return (x>=0 && x<=7 && y>=0 && y<=7); }
 
-/*
- * row_width[dy] = number of pixels in diamond row dy.
- *
- *   dy: 0  1  2  3  4  5  6  7
- *   w:  1  3  5  7  8  7  5  3  1
- *
- * Note: there are 9 rows in a pure diamond but our 8×8 hardware only
- * has 8 rows.  We drop the widest centre row from 9 to 8 by treating
- * dy=4 as the 8-pixel equator.  Total pixels = 1+3+5+7+8+7+5+3+1 but
- * using 8 rows: 1+3+5+7+8+7+5+3 = 39 — but we only use dy 0..7 giving
- * widths: 1,3,5,7,8,7,5,1 = 37.  Use SAND_GRAINS ≤ 30 for a nice fill.
- *
- * Wait — 8 rows means dy 0..7.  Let's define:
- *   dy=0: 1  (top tip)
- *   dy=1: 3
- *   dy=2: 5
- *   dy=3: 7
- *   dy=4: 8  (equator, widest)
- *   dy=5: 7
- *   dy=6: 5
- *   dy=7: 1  (bottom tip = neck)
- */
-static const uint8_t ROW_WIDTH[8] = { 1, 3, 5, 7, 8, 7, 5, 1 };
-
-/*
- * ROW_OFFSET[dy] = hardware column of the leftmost pixel in row dy.
- * hw_col = dx + ROW_OFFSET[dy]
- */
-static const uint8_t ROW_OFFSET[8] = { 3, 2, 1, 0, 0, 0, 1, 3 };
-
-/* Total pixels in the diamond (sum of ROW_WIDTH) = 37 */
-#define DIAMOND_TOTAL  10u
-
-/* ── Diamond validity check ─────────────────────────────────────── */
-static uint8_t diamond_valid(int8_t dy, int8_t dx)
+static uint8_t pix_get(uint8_t addr, int x, int y)
 {
-    if (dy < 0 || dy > 7) return 0;
-    if (dx < 0 || dx >= (int8_t)ROW_WIDTH[(uint8_t)dy]) return 0;
-    return 1;
+    if (!in_bounds(x,y)) return 0;
+    return MAX7219_GetXY(&lc, addr, (uint8_t)x, (uint8_t)y);
 }
 
-/* ── Map diamond (dy, dx) → hardware (hw_x=col, hw_y=row) ─────────
- * The diamond row dy IS the hardware row.
- * The hardware column = dx + ROW_OFFSET[dy].
- * MAX7219_SetXY(addr, x=hw_col, y=hw_row) then the driver's per-matrix
- * rotation maps to the physical LED.
- */
-static void diamond_to_hw(uint8_t dy, uint8_t dx,
-                           uint8_t *hw_x, uint8_t *hw_y)
-{
-    *hw_x = dx + ROW_OFFSET[dy];   /* column */
-    *hw_y = dy;                     /* row    */
-}
+static uint8_t pix_empty(uint8_t addr, int x, int y)
+{ return in_bounds(x,y) && !pix_get(addr,(uint8_t)x,(uint8_t)y); }
 
-/* ── Read / write a diamond pixel via the MAX7219 driver ─────────── */
-static void diamond_set(uint8_t addr, int8_t dy, int8_t dx, uint8_t on)
+static void pix_move(uint8_t addr, int fx, int fy, int tx, int ty)
 {
-    uint8_t hx, hy;
-    diamond_to_hw((uint8_t)dy, (uint8_t)dx, &hx, &hy);
-    MAX7219_SetXY(&lc, addr, hx, hy, on);
-}
-
-static uint8_t diamond_get(uint8_t addr, int8_t dy, int8_t dx)
-{
-    uint8_t hx, hy;
-    diamond_to_hw((uint8_t)dy, (uint8_t)dx, &hx, &hy);
-    return MAX7219_GetXY(&lc, addr, hx, hy);
-}
-
-/* ── Is a diamond cell empty? ────────────────────────────────────── */
-static uint8_t cell_empty(uint8_t addr, int8_t dy, int8_t dx)
-{
-    if (!diamond_valid(dy, dx)) return 0;
-    return diamond_get(addr, dy, dx) == 0;
-}
-
-/* ── Move grain from (fdy,fdx) to (tdy,tdx) ─────────────────────── */
-static void move_grain(uint8_t addr,
-                       int8_t fdy, int8_t fdx,
-                       int8_t tdy, int8_t tdx)
-{
-    diamond_set(addr, fdy, fdx, 0);
-    diamond_set(addr, tdy, tdx, 1);
+    MAX7219_SetXY(&lc, addr, (uint8_t)fx, (uint8_t)fy, 0);
+    MAX7219_SetXY(&lc, addr, (uint8_t)tx, (uint8_t)ty, 1);
 }
 
 /* ================================================================== */
-/* SECTION 2 — Gravity direction in diamond space                      */
+/* SECTION 1 — Physics for Matrix A                                    */
 /*                                                                      */
-/*  gravity=0  : down = +dy  (normal, sand falls toward neck at dy=7)  */
-/*  gravity=180: down = -dy  (upside-down, sand falls toward top tip)  */
-/*  gravity=90 : down mapped to lateral — not natural for diamond,     */
-/*               treat as gravity=0 (sand still goes to tip)           */
-/*  gravity=270: same                                                   */
-/*                                                                      */
-/*  For 90°/270° sideways tilt the diamond has no natural sideways     */
-/*  gravity so we keep sand falling toward the current bottom tip.     */
-/*  The display rotation handles the visual orientation.               */
+/* "Down" in A = toward (7,0) = x++, y--                              */
+/* From (x,y):                                                         */
+/*   straight: (x+1, y-1)                                             */
+/*   slide L:  (x,   y-1)   [left face of diamond]                    */
+/*   slide R:  (x+1, y  )   [right face of diamond]                   */
 /* ================================================================== */
-
-/* Returns +1 if down = +dy, -1 if down = -dy */
-static int8_t dy_direction(void)
+static uint8_t step_A(uint8_t x, uint8_t y)
 {
-    return (gravity == 180) ? -1 : +1;
-}
-
-/* ================================================================== */
-/* SECTION 3 — Single-particle physics in diamond space                */
-/*                                                                      */
-/*  For gravity=0 (+dy direction):                                      */
-/*  A grain at (dy, dx) tries:                                          */
-/*    1. Straight down:  (dy+1, dx + ROW_OFFSET[dy] - ROW_OFFSET[dy+1])*/
-/*    2. Diag left:   same dx_below - 1                                 */
-/*    3. Diag right:  same dx_below + 1                                 */
-/*                                                                      */
-/*  The "dx_below" formula preserves the physical column position so    */
-/*  the grain falls straight down visually.                             */
-/* ================================================================== */
-
-static uint8_t step_particle(uint8_t addr, int8_t dy, int8_t dx)
-{
-    if (!diamond_get(addr, dy, dx)) return 0;   /* cell empty */
-
-    int8_t dir   = dy_direction();
-    int8_t dy_to = dy + dir;
-    if (dy_to < 0 || dy_to > 7) return 0;   /* at the tip — can't go further */
-
-    /*
-     * dx_below: the dx index in row dy_to that is directly below/above dx.
-     *
-     * Physical column of current grain: hw_col = dx + ROW_OFFSET[dy]
-     * dx in target row:                 dx_to  = hw_col - ROW_OFFSET[dy_to]
-     *                                           = dx + ROW_OFFSET[dy] - ROW_OFFSET[dy_to]
-     */
-    int8_t col_shift = (int8_t)ROW_OFFSET[(uint8_t)dy]
-                     - (int8_t)ROW_OFFSET[(uint8_t)dy_to];
-    int8_t dx_to = dx + col_shift;
+    if (!pix_get(MATRIX_A, x, y)) return 0;
+    int ix = x, iy = y;
 
     /* 1. Straight down */
-    if (cell_empty(addr, dy_to, dx_to)) {
-        move_grain(addr, dy, dx, dy_to, dx_to);
+    if (pix_empty(MATRIX_A, ix+1, iy-1)) {
+        pix_move(MATRIX_A, ix, iy, ix+1, iy-1);
         return 1;
     }
-
-    /* 2+3. Diagonals — randomly ordered */
-    int8_t dx_left  = dx_to - 1;
-    int8_t dx_right = dx_to + 1;
-    uint8_t can_l = cell_empty(addr, dy_to, dx_left);
-    uint8_t can_r = cell_empty(addr, dy_to, dx_right);
-
-    if (can_l && can_r) {
-        if (rand() & 1) move_grain(addr, dy, dx, dy_to, dx_left);
-        else            move_grain(addr, dy, dx, dy_to, dx_right);
+    /* 2+3. Diagonal slides — randomise order */
+    uint8_t cL = pix_empty(MATRIX_A, ix,   iy-1);
+    uint8_t cR = pix_empty(MATRIX_A, ix+1, iy  );
+    if (cL && cR) {
+        if (rand()&1) pix_move(MATRIX_A, ix, iy, ix,   iy-1);
+        else          pix_move(MATRIX_A, ix, iy, ix+1, iy  );
         return 1;
     }
-    if (can_l) { move_grain(addr, dy, dx, dy_to, dx_left);  return 1; }
-    if (can_r) { move_grain(addr, dy, dx, dy_to, dx_right); return 1; }
-
-    return 0;   /* settled */
+    if (cL) { pix_move(MATRIX_A, ix, iy, ix,   iy-1); return 1; }
+    if (cR) { pix_move(MATRIX_A, ix, iy, ix+1, iy  ); return 1; }
+    return 0;
 }
 
 /* ================================================================== */
-/* SECTION 4 — Matrix scan                                             */
+/* SECTION 2 — Physics for Matrix B                                    */
 /*                                                                      */
-/*  Scan from the bottom row (dy=7) toward top (dy=0) when falling +dy.*/
-/*  This ensures a grain lands in an already-processed cell and does   */
-/*  not move twice in the same frame.                                  */
+/* "Down" in B = toward (0,7) = x--, y++                              */
+/* From (x,y):                                                         */
+/*   straight: (x-1, y+1)                                             */
+/*   slide L:  (x-1, y  )   [left face]                               */
+/*   slide R:  (x,   y+1)   [right face]                              */
 /* ================================================================== */
+static uint8_t step_B(uint8_t x, uint8_t y)
+{
+    if (!pix_get(MATRIX_B, x, y)) return 0;
+    int ix = x, iy = y;
 
+    if (pix_empty(MATRIX_B, ix-1, iy+1)) {
+        pix_move(MATRIX_B, ix, iy, ix-1, iy+1);
+        return 1;
+    }
+    uint8_t cL = pix_empty(MATRIX_B, ix-1, iy  );
+    uint8_t cR = pix_empty(MATRIX_B, ix,   iy+1);
+    if (cL && cR) {
+        if (rand()&1) pix_move(MATRIX_B, ix, iy, ix-1, iy  );
+        else          pix_move(MATRIX_B, ix, iy, ix,   iy+1);
+        return 1;
+    }
+    if (cL) { pix_move(MATRIX_B, ix, iy, ix-1, iy  ); return 1; }
+    if (cR) { pix_move(MATRIX_B, ix, iy, ix,   iy+1); return 1; }
+    return 0;
+}
+
+/* ================================================================== */
+/* SECTION 3 — Matrix scan order                                       */
+/*                                                                      */
+/* Scan bottom-first (highest k first for A, lowest k first for B)    */
+/* so settled grains don't block falling ones in the same frame.       */
+/*                                                                      */
+/* For A (down = x++, y--):                                            */
+/*   Scan from k=7 (bottom tip) up to k=-7 (top tip).                 */
+/*   k = x - y, so scan pixels with highest (x-y) first.              */
+/*   For each k, iterate over all valid (x,y) pairs in that slice.    */
+/*                                                                      */
+/* For B (down = x--, y++):                                            */
+/*   Scan from k=-7 (bottom tip) up to k=7 (top tip).                 */
+/*   For each k, iterate pixels with lowest (x-y) first.              */
+/* ================================================================== */
 uint8_t hourglass_update(void)
 {
     uint8_t moved = 0;
-    int8_t  dir   = dy_direction();   /* +1 or -1 */
 
-    /*
-     * Start scan at the BOTTOM (gravity direction), go toward TOP.
-     * For dir=+1: dy from 7→0  (bottom first = row 7 first)
-     * For dir=-1: dy from 0→7  (bottom first = row 0 first since dir=-1)
-     */
-    int8_t dy_start = (dir == +1) ? 7 : 0;
-    int8_t dy_end   = (dir == +1) ? 0 : 7;
-
-    for (int8_t dy = dy_start;
-         (dir == +1) ? (dy >= dy_end) : (dy <= dy_end);
-         dy -= dir)
-    {
-        uint8_t w    = ROW_WIDTH[(uint8_t)dy];
-        uint8_t flip = (uint8_t)(rand() & 1);   /* randomise left-right order */
-
-        for (uint8_t m = 0; m < w; m++) {
-            int8_t dx = (int8_t)(flip ? m : (w - 1 - m));
-            /* Bottom matrix processes before top for correct settling */
-            if (step_particle(MATRIX_B, dy, dx)) moved = 1;
-            if (step_particle(MATRIX_A, dy, dx)) moved = 1;
+    /* ── Matrix A: scan k from 7 (bottom) down to -7 (top) ── */
+    for (int k = 7; k >= -7; k--) {
+        /* All (x,y) where x-y == k, x in 0..7, y in 0..7 */
+        /* x = y+k, y in max(0,-k)..min(7,7-k) */
+        int y_min = (k < 0) ? -k : 0;
+        int y_max = (k < 0) ? 7  : 7-k;
+        /* Randomise within-slice order */
+        uint8_t flip = rand()&1;
+        for (int yi = 0; yi <= (y_max - y_min); yi++) {
+            int y = flip ? (y_min + yi) : (y_max - yi);
+            int x = y + k;
+            if (x<0||x>7||y<0||y>7) continue;
+            if (step_A((uint8_t)x, (uint8_t)y)) moved = 1;
         }
     }
+
+    /* ── Matrix B: scan k from -7 (bottom) up to 7 (top) ── */
+    for (int k = -7; k <= 7; k++) {
+        int y_min = (k < 0) ? -k : 0;
+        int y_max = (k < 0) ? 7  : 7-k;
+        uint8_t flip = rand()&1;
+        for (int yi = 0; yi <= (y_max - y_min); yi++) {
+            int y = flip ? (y_min + yi) : (y_max - yi);
+            int x = y + k;
+            if (x<0||x>7||y<0||y>7) continue;
+            if (step_B((uint8_t)x, (uint8_t)y)) moved = 1;
+        }
+    }
+
     return moved;
 }
 
 /* ================================================================== */
-/* SECTION 5 — Neck pixel in diamond space                             */
-/*                                                                      */
-/*  gravity=0:   A exit = bottom tip (dy=7, dx=0)                      */
-/*               B entry = top tip   (dy=0, dx=0)                      */
-/*  gravity=180: A exit = top tip    (dy=0, dx=0)                      */
-/*               B entry = bottom tip(dy=7, dx=0)                      */
-/* ================================================================== */
-
-typedef struct { int8_t dy; int8_t dx; } DiamondPixel;
-
-static DiamondPixel neck_exit(void)
-{
-    return (gravity == 180) ? (DiamondPixel){0, 0} : (DiamondPixel){7, 0};
-}
-
-static DiamondPixel neck_entry(void)
-{
-    return (gravity == 180) ? (DiamondPixel){7, 0} : (DiamondPixel){0, 0};
-}
-
-/* ================================================================== */
-/* SECTION 6 — Timer                                                   */
+/* SECTION 4 — Neck pixel & timer                                      */
 /* ================================================================== */
 
 uint32_t millis(void) { return HAL_GetTick(); }
 
 static uint32_t drop_interval_ms(void)
 {
-    uint32_t total_ms = ((uint32_t)delayHours * 60UL
-                       + (uint32_t)delayMinutes) * 60000UL;
-    if (total_ms == 0) total_ms = 60000UL;
-    return total_ms / (uint32_t)SAND_GRAINS;
+    uint32_t t = ((uint32_t)delayHours*60 + delayMinutes) * 60000UL;
+    if (!t) t = 60000UL;
+    return t / SAND_GRAINS;
 }
 
 uint8_t hourglass_top_matrix(void)
-{
-    return (gravity == 180) ? MATRIX_B : MATRIX_A;
-}
+{ return (gravity==180) ? MATRIX_B : MATRIX_A; }
 
 static uint8_t hourglass_bottom_matrix(void)
+{ return (hourglass_top_matrix()==MATRIX_A) ? MATRIX_B : MATRIX_A; }
+
+/*
+ * Neck pixels (logical coords passed to MAX7219_GetXY/SetXY):
+ *
+ * gravity=0:
+ *   A exit  = (7,0)  — bottom tip of A
+ *   B entry = (7,0)  — top tip of B
+ *
+ * gravity=180 (flipped):
+ *   B exit  = (0,7)  — B's bottom tip is now physically on top
+ *   A entry = (0,7)  — A's top tip receives
+ *
+ * Note: after hourglass_top_matrix() returns the correct source,
+ * neck_exit() is for that matrix and neck_entry() is for the other.
+ */
+typedef struct { uint8_t x; uint8_t y; } Pix;
+
+static Pix neck_exit(void)
 {
-    return (hourglass_top_matrix() == MATRIX_A) ? MATRIX_B : MATRIX_A;
+    /* Exit point of the TOP matrix */
+    if (gravity == 180) return (Pix){0,0};  /* B's bottom tip */
+    return (Pix){7,7};                       /* A's bottom tip */
+}
+
+static Pix neck_entry(void)
+{
+    /* Entry point of the BOTTOM matrix */
+    if (gravity == 180) return (Pix){7,7};  /* A's top tip    */
+    return (Pix){0,0};                       /* B's top tip    */
+}
+
+uint8_t hourglass_drop(void)
+{
+    if (HAL_GetTick() - drop_delay.start < drop_delay.interval) return 0;
+    drop_delay.start    = HAL_GetTick();
+    drop_delay.interval = drop_interval_ms();
+
+    uint8_t top = hourglass_top_matrix();
+    uint8_t bot = hourglass_bottom_matrix();
+    Pix     ex  = neck_exit();
+    Pix     en  = neck_entry();
+
+    if (MAX7219_GetXY(&lc, top, ex.x, ex.y) &&
+       !MAX7219_GetXY(&lc, bot, en.x, en.y))
+    {
+        MAX7219_SetXY(&lc, top, ex.x, ex.y, 0);
+        MAX7219_SetXY(&lc, bot, en.x, en.y, 1);
+        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+        HAL_Delay(4);
+        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+        return 1;
+    }
+    return 0;
 }
 
 /* ================================================================== */
-/* SECTION 7 — Fill  (initial grain placement)                         */
+/* SECTION 5 — Fill                                                    */
 /*                                                                      */
-/*  Fill the top matrix from the TOP TIP downward, row by row,         */
-/*  placing grains from the tip (dy=0) toward the neck (dy=7).         */
+/* Fill Matrix A from top tip (0,7) downward through antidiagonals.   */
+/* Antidiag k = x-y, fill k=-7,-6,...,7 until SAND_GRAINS placed.    */
 /*                                                                      */
-/*  This gives the "full upper chamber" look: the rhombus is filled    */
-/*  from the top tip down to a horizontal line.                        */
-/*                                                                      */
-/*  For gravity=0 (A on top, sand falls +dy):                          */
-/*    Fill from dy=0 down.                                              */
-/*  For gravity=180 (B on top, sand falls -dy):                        */
-/*    Fill from dy=7 up (bottom tip of B is now the physical top).     */
+/* For gravity=180, fill Matrix B from its top tip (7,0) downward.    */
+/* In B "downward" from (7,0) means increasing antidiag k from        */
+/* k=7 toward k=-7 (toward (0,7)).                                    */
 /* ================================================================== */
-
-static void fill_diamond(uint8_t addr, uint8_t count)
+static void fill_A(uint8_t count)
 {
     uint8_t placed = 0;
-    int8_t  dir    = dy_direction();   /* +1 = fill from tip (dy=0) down */
-                                        /* -1 = fill from tip (dy=7) up  */
-
-    /* Start at the gravity-top tip, fill toward gravity-bottom */
-    int8_t dy_start = (dir == +1) ? 0 : 7;
-
-    for (int8_t dy = dy_start;
-         (dir == +1) ? (dy <= 7) : (dy >= 0);
-         dy += dir)
-    {
-        uint8_t w = ROW_WIDTH[(uint8_t)dy];
-        for (uint8_t dx = 0; dx < w && placed < count; dx++) {
-            diamond_set(addr, dy, (int8_t)dx, 1);
+    /* Fill A from k=-7 (top tip) to k=7 (bottom tip) */
+    for (int k = -7; k <= 7 && placed < count; k++) {
+        int y_min = (k<0)?-k:0;
+        int y_max = (k<0)?7:7-k;
+        for (int y = y_min; y <= y_max && placed < count; y++) {
+            int x = y + k;
+            if (x<0||x>7) continue;
+            MAX7219_SetXY(&lc, MATRIX_A, (uint8_t)x, (uint8_t)y, 1);
             placed++;
         }
     }
 }
 
+static void fill_B(uint8_t count)
+{
+    uint8_t placed = 0;
+    /* Fill B from k=7 (top tip (7,0)) toward k=-7 (bottom tip (0,7)) */
+    for (int k = 7; k >= -7 && placed < count; k--) {
+        int y_min = (k<0)?-k:0;
+        int y_max = (k<0)?7:7-k;
+        for (int y = y_min; y <= y_max && placed < count; y++) {
+            int x = y + k;
+            if (x<0||x>7) continue;
+            MAX7219_SetXY(&lc, MATRIX_B, (uint8_t)x, (uint8_t)y, 1);
+            placed++;
+        }
+    }
+}
 
 /* ================================================================== */
-/* SECTION 8 — Public API                                              */
+/* SECTION 6 — Public API                                              */
 /* ================================================================== */
 
 uint8_t hourglass_count(uint8_t addr)
 {
     uint8_t c = 0;
-    for (uint8_t dy = 0; dy < 8; dy++)
-        for (uint8_t dx = 0; dx < ROW_WIDTH[dy]; dx++)
-            if (diamond_get(addr, (int8_t)dy, (int8_t)dx)) c++;
+    for (uint8_t y=0; y<8; y++)
+        for (uint8_t x=0; x<8; x++)
+            if (MAX7219_GetXY(&lc, addr, x, y)) c++;
     return c;
 }
 
 void hourglass_flip(void)
 {
-    /* Preserve all grain positions; just restart the timer */
+    /* Preserve grain state, just restart timer */
     alarmWentOff        = false;
     drop_delay.start    = HAL_GetTick();
     drop_delay.interval = drop_interval_ms();
@@ -457,42 +377,16 @@ void hourglass_reset(void)
 {
     MAX7219_ClearDisplay(&lc, MATRIX_A);
     MAX7219_ClearDisplay(&lc, MATRIX_B);
-    fill_diamond(hourglass_top_matrix(), SAND_GRAINS);
-//    fill_rhombus_pattern(hourglass_top_matrix(), SAND_GRAINS);
+    if (gravity == 180) fill_B(SAND_GRAINS);
+    else                fill_A(SAND_GRAINS);
     alarmWentOff        = false;
     drop_delay.start    = HAL_GetTick();
     drop_delay.interval = drop_interval_ms();
 }
 
-uint8_t hourglass_drop(void)
-{
-    if (HAL_GetTick() - drop_delay.start < drop_delay.interval) return 0;
-    drop_delay.start    = HAL_GetTick();
-    drop_delay.interval = drop_interval_ms();
-
-    uint8_t      top = hourglass_top_matrix();
-    uint8_t      bot = hourglass_bottom_matrix();
-    DiamondPixel ex  = neck_exit();
-    DiamondPixel en  = neck_entry();
-
-    uint8_t top_has = diamond_get(top, ex.dy, ex.dx);
-    uint8_t bot_clr = !diamond_get(bot, en.dy, en.dx);
-
-    if (top_has && bot_clr) {
-        diamond_set(top, ex.dy, ex.dx, 0);
-        diamond_set(bot, en.dy, en.dx, 1);
-
-        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
-        HAL_Delay(4);
-        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
-        return 1;
-    }
-    return 0;
-}
-
 void alarm_trigger(void)
 {
-    for (int i = 0; i < 5; i++) {
+    for (int i=0; i<5; i++) {
         HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
         HAL_Delay(200);
         HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);

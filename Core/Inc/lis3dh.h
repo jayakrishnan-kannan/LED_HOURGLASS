@@ -1,31 +1,26 @@
 /*
- * lis3dh.h  —  LIS3DH accelerometer driver, STM32 HAL I2C
+ * lis3dh.h
  */
 #ifndef LIS3DH_H
 #define LIS3DH_H
 
 #include "stm32f1xx_hal.h"
 
-/* I2C address: SA0=GND → 0x18, SA0=VCC → 0x19 */
-#define LIS3DH_I2C_ADDR       (0x18 << 1)
-
-/* Registers */
-#define LIS3DH_WHO_AM_I_REG   0x0F
-#define LIS3DH_WHO_AM_I_VAL   0x33
-#define LIS3DH_CTRL_REG1      0x20
-#define LIS3DH_CTRL_REG4      0x23
-#define LIS3DH_OUT_X_L        0x28
+#define LIS3DH_I2C_ADDR     (0x18 << 1)
+#define LIS3DH_WHO_AM_I_REG  0x0F
+#define LIS3DH_WHO_AM_I_VAL  0x33
+#define LIS3DH_CTRL_REG1     0x20
+#define LIS3DH_CTRL_REG4     0x23
+#define LIS3DH_OUT_X_L       0x28
 
 typedef struct {
     I2C_HandleTypeDef *hi2c;
-    int16_t raw_x;
-    int16_t raw_y;
-    int16_t raw_z;
-    int     gravity;   /* last stable reading: 0 / 90 / 180 / 270 */
+    int16_t raw_x, raw_y, raw_z;
+    int     gravity;
 } LIS3DH_HandleTypeDef;
 
-uint8_t LIS3DH_Init             (LIS3DH_HandleTypeDef *dev, I2C_HandleTypeDef *hi2c);
-void    LIS3DH_ReadRaw          (LIS3DH_HandleTypeDef *dev);
+uint8_t LIS3DH_Init              (LIS3DH_HandleTypeDef *dev, I2C_HandleTypeDef *hi2c);
+void    LIS3DH_ReadRaw           (LIS3DH_HandleTypeDef *dev);
 int     LIS3DH_GetGravityDirection(LIS3DH_HandleTypeDef *dev);
 
-#endif /* LIS3DH_H */
+#endif
