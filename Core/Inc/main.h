@@ -86,8 +86,8 @@ extern NonBlockDelay_t  drop_delay;
 #define MATRIX_B_ROTATION  ROTATION_90    /* MATRIX_B rotation (180° from A) */
 
 /* ── Physics constants ─────��─────────────��───────────────────────── */
-#define SAND_GRAINS     35u   /* grains per chamber (≤ 64)   */
-#define DELAY_FRAME_MS  8u   /* main-loop period ms          */
+#define SAND_GRAINS     36u   /* grains per chamber (≤ 64)   */
+#define DELAY_FRAME_MS  80u   /* main-loop period ms          */
 #define DEFAULT_HOURS   0u
 #define DEFAULT_MINUTES 1u
 

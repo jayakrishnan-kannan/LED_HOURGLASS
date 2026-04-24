@@ -2,6 +2,7 @@
  * lis3dh.c
  */
 #include "lis3dh.h"
+static uint16_t LIS3DH_I2C_ADDR = (0x18 << 1); // Default
 
 static void reg_write(LIS3DH_HandleTypeDef *dev, uint8_t reg, uint8_t val)
 { HAL_I2C_Mem_Write(dev->hi2c, LIS3DH_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT, &val, 1, 100); }
@@ -11,8 +12,17 @@ static uint8_t reg_read(LIS3DH_HandleTypeDef *dev, uint8_t reg)
 
 static int iabs(int v) { return v < 0 ? -v : v; }
 
+void Detect_LIS3DH(I2C_HandleTypeDef *hi2c) {
+    if (HAL_I2C_IsDeviceReady(hi2c, (0x18 << 1), 3, 10) == HAL_OK) {
+    	LIS3DH_I2C_ADDR = (0x18 << 1);
+    } else if (HAL_I2C_IsDeviceReady(hi2c, (0x19 << 1), 3, 10) == HAL_OK) {
+    	LIS3DH_I2C_ADDR = (0x19 << 1);
+    }
+}
+
 uint8_t LIS3DH_Init(LIS3DH_HandleTypeDef *dev, I2C_HandleTypeDef *hi2c)
 {
+	Detect_LIS3DH(hi2c);
     dev->hi2c = hi2c;
     dev->raw_x = dev->raw_y = dev->raw_z = 0;
     dev->gravity = 0;

@@ -6,7 +6,7 @@
 
 #include "stm32f1xx_hal.h"
 
-#define LIS3DH_I2C_ADDR     (0x18 << 1)
+//#define LIS3DH_I2C_ADDR     (LIS3DH_Addr)
 #define LIS3DH_WHO_AM_I_REG  0x0F
 #define LIS3DH_WHO_AM_I_VAL  0x33
 #define LIS3DH_CTRL_REG1     0x20

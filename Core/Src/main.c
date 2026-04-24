@@ -166,11 +166,21 @@ int main(void)
   srand(HAL_GetTick());
 
   while (LIS3DH_Init(&accel, &hi2c1) == 0)
-      led_blink(200);
+      led_blink(80);
 
   gravity = LIS3DH_GetGravityDirection(&accel);
-
   MAX7219_Test_BlinkAll(&lc);
+//  if(gravity==0)
+//  {
+//	  MAX7219_SetXY(&lc, MATRIX_A, 4,4,1);
+//  }
+//  else if(gravity==180)
+//  {
+//	  MAX7219_SetXY(&lc, MATRIX_A, 7,0,10);
+//  }
+//while(1);
+
+//  fills grains near the neck for the matrix on top
   hourglass_reset();
 
   /* USER CODE END 2 */
@@ -180,7 +190,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	  led_blink(80);
+//	  led_blink(200);
     /* USER CODE BEGIN 3 */
       HAL_Delay(DELAY_FRAME_MS);
 
@@ -194,12 +204,14 @@ int main(void)
           gravity = new_grav;
           if (delta == 180) {
               hourglass_flip();
+              hourglass_update();
               continue;
           }
       }
 
       uint8_t moved   = hourglass_update();
       uint8_t dropped = hourglass_drop();
+//      uint8_t dropped = 0;
 
       if (!moved && !dropped) {
           if (hourglass_count(hourglass_top_matrix()) == 0) {
@@ -207,7 +219,7 @@ int main(void)
 //              alarm_trigger();
           }
       }
-      if (dropped) alarmWentOff = false;
+//      if (dropped) alarmWentOff = false;
   }
   /* USER CODE END 3 */
 }
