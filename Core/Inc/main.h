@@ -69,6 +69,9 @@ extern uint16_t ADC_value;
 #define CS_PIN_Pin          GPIO_PIN_4
 #define CS_PIN_GPIO_Port    GPIOA
 
+//#define BUZZER_PORT         GPIOB
+//#define BUZZER_PIN          GPIO_PIN_0
+
 #define RESET_BTN_PORT      GPIOB
 #define RESET_BTN_PIN       GPIO_PIN_1
 
@@ -108,6 +111,7 @@ uint8_t  hourglass_update(void);
 uint8_t  hourglass_drop(void);
 uint8_t  hourglass_count(uint8_t addr);
 uint8_t  hourglass_top_matrix(void);
+uint8_t  hourglass_settled(void);
 uint8_t  hourglass_bottom_matrix(void);
 void     display_led_count(uint8_t count);
 void 	 clear_displays(void);

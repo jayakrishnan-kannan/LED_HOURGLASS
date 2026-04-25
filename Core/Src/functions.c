@@ -2,11 +2,13 @@
 #include "max7219.h"
 #include <stdlib.h>
 
+#define RESET_GRACE_MS  3000UL
 uint8_t         delayHours   = DEFAULT_HOURS;
 uint8_t         delayMinutes = DEFAULT_MINUTES;
 int             gravity      = 180;
 bool            alarmWentOff = false;
 NonBlockDelay_t drop_delay;
+static uint32_t reset_time = 0;
 
 static uint8_t in_bounds(int x, int y)
 { return (x>=0 && x<=7 && y>=0 && y<=7); }
@@ -138,11 +140,10 @@ uint8_t hourglass_update(void)
     return moved;
 }
 
-static uint32_t drop_interval_ms(void)
+static uint32_t hourglass_total_ms(void)
 {
     uint32_t t = ((uint32_t)delayHours * 60 + delayMinutes) * 60000UL;
-    if (!t) t = 60000UL;
-    return t / SAND_GRAINS;
+    return t ? t : 60000UL;
 }
 
 uint8_t hourglass_top_matrix(void)
@@ -173,11 +174,20 @@ static Pix neck_entry(void)
     return (Pix){0, 7};
 }
 
+/* grains_dropped: how many grains should have fallen by now */
+static uint8_t grains_dropped = 0;
+
 uint8_t hourglass_drop(void)
 {
-    if (HAL_GetTick() - drop_delay.start < drop_delay.interval) return 0;
-    drop_delay.start    = HAL_GetTick();
-    drop_delay.interval = drop_interval_ms();
+    uint32_t total_ms = hourglass_total_ms();
+    uint32_t elapsed  = HAL_GetTick() - drop_delay.start;
+
+    /* grains that should have dropped by now, capped at SAND_GRAINS */
+    uint8_t should_have = (elapsed >= total_ms)
+        ? SAND_GRAINS
+        : (uint8_t)((uint64_t)elapsed * SAND_GRAINS / total_ms);
+
+    if (should_have <= grains_dropped) return 0;
 
     uint8_t top = hourglass_top_matrix();
     uint8_t bot = hourglass_bottom_matrix();
@@ -189,6 +199,7 @@ uint8_t hourglass_drop(void)
     {
         MAX7219_SetXY(&lc, top, ex.x, ex.y, 0);
         MAX7219_SetXY(&lc, bot, en.x, en.y, 1);
+        grains_dropped++;
         return 1;
     }
     return 0;
@@ -231,25 +242,16 @@ static void fill_B(uint8_t count)
 
 void display_led_count(uint8_t count)
 {
-    if (count > 120) count = 120;
-
-    /* MATRIX_A: lit pixels = min(count, 60) */
-    uint8_t a_count = (count >= 60) ? 60 : count;
-//    MAX7219_ClearDisplay(&lc, MATRIX_A);
-    for (uint8_t i = 0; i < a_count; i++)
-        MAX7219_SetXY(&lc, MATRIX_A, i % 8, i / 8, 1);
-
-    /* MATRIX_B: lit pixels = count beyond 60 */
-    uint8_t b_count = (count > 60) ? (count - 60) : 0;
-//    MAX7219_ClearDisplay(&lc, MATRIX_B);
-    for (uint8_t i = 0; i < b_count; i++)
-        MAX7219_SetXY(&lc, MATRIX_B, i % 8, i / 8, 1);
-}
-void clear_displays(void)
-{
-	MAX7219_ClearDisplay(&lc, MATRIX_B);
-	MAX7219_ClearDisplay(&lc, MATRIX_A);
-	HAL_Delay(50);
+    /* ONLY write to top matrix. Bottom matrix is never touched here.
+     * Max 60 LEDs (one full matrix). count = minutes * 2 (0..120)
+     * capped to 60 so it fits on one matrix without bleeding into bottom.
+     * hourglass_reset() will clear both matrices cleanly afterward.
+     */
+    if (count > 60) count = 60;
+    uint8_t top = hourglass_top_matrix();
+    MAX7219_ClearDisplay(&lc, top);
+    for (uint8_t i = 0; i < count; i++)
+        MAX7219_SetXY(&lc, top, i % 8, i / 8, 1);
 }
 
 uint8_t hourglass_count(uint8_t addr)
@@ -263,9 +265,19 @@ uint8_t hourglass_count(uint8_t addr)
 
 void hourglass_flip(void)
 {
-    alarmWentOff        = false;
-    drop_delay.start    = HAL_GetTick();
-    drop_delay.interval = drop_interval_ms();
+    alarmWentOff    = false;
+    grains_dropped  = 0;
+    reset_time      = HAL_GetTick();
+    drop_delay.start = HAL_GetTick();
+}
+
+/* ms after reset during which alarm is suppressed */
+
+
+uint8_t hourglass_settled(void)
+{
+    /* Returns 1 only after grace period — prevents false alarm on reset */
+    return (HAL_GetTick() - reset_time) >= RESET_GRACE_MS;
 }
 
 void hourglass_reset(void)
@@ -274,9 +286,10 @@ void hourglass_reset(void)
     MAX7219_ClearDisplay(&lc, MATRIX_B);
     if (gravity == 180) fill_B(SAND_GRAINS);
     else                fill_A(SAND_GRAINS);
-    alarmWentOff        = false;
-    drop_delay.start    = HAL_GetTick();
-    drop_delay.interval = drop_interval_ms();
+    alarmWentOff    = false;
+    grains_dropped  = 0;
+    reset_time      = HAL_GetTick();
+    drop_delay.start = HAL_GetTick();
 }
 
 void alarm_trigger(void)

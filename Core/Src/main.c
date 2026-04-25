@@ -103,11 +103,6 @@ static void beep_confirm(void)
     beep(1200, 80);
 }
 
-static void beep_tick(void)   /* one LED extinguished */
-{
-    beep(800, 20);
-}
-
 static void beep_alarm(void)  /* timer done */
 {
     for (int i = 0; i < 5; i++) {
@@ -150,14 +145,15 @@ static uint8_t read_pot_minutes(void)
 
 static void pot_setting_mode(void)
 {
-    /* Clear both matrices so old pixels don't confuse the new reading */
-    MAX7219_ClearDisplay(&lc, MATRIX_A);
-    MAX7219_ClearDisplay(&lc, MATRIX_B);
+    /* Only clear top matrix — bottom is untouched.
+     * hourglass_reset() called after this will clear everything cleanly. */
+    uint8_t top = hourglass_top_matrix();
+    MAX7219_ClearDisplay(&lc, top);
 
     uint8_t  last     = read_pot_minutes();
     uint32_t stable_t = HAL_GetTick();
 
-    display_led_count(last * 2);  /* 2 LEDs per minute */
+    display_led_count(last * 2);
 
     while (1) {
         HAL_Delay(30);
@@ -165,46 +161,46 @@ static void pot_setting_mode(void)
         uint8_t diff = (cur > last) ? (cur - last) : (last - cur);
 
         if (diff > POT_DEADBAND) {
-            /* Pot moved — clear and redraw from scratch */
-            MAX7219_ClearDisplay(&lc, MATRIX_A);
-            MAX7219_ClearDisplay(&lc, MATRIX_B);
+            MAX7219_ClearDisplay(&lc, top);
             last     = cur;
             stable_t = HAL_GetTick();
-            display_led_count(cur * 2);  /* 2 LEDs per minute */
+            display_led_count(cur * 2);
         } else if (HAL_GetTick() - stable_t >= POT_SETTLE_MS) {
+            /* Stable for POT_SETTLE_MS — confirm */
             delayMinutes = last;
             delayHours   = 0;
             beep_confirm();
-            //hourglass_reset();
             return;
         }
     }
 }
 
-/* ── Tick display (30 sec per LED) ──────────────────────────────── */
+/* ── Tick display ────────────────────────────────────────────────── */
 /*
- * Each call removes one LED from the display to show time passing.
- * Called from the main loop every TICK_INTERVAL_MS.
- * Works independently of sand physics — purely visual progress bar.
+ * Synced to grain drain:
+ *   total_ms  = delayMinutes * 60000
+ *   tick_leds = delayMinutes * 2  (2 LEDs per minute)
+ *   tick_interval = total_ms / tick_leds = 30000ms  (always 30s per LED)
+ *
+ * BUT: drop_interval = total_ms / SAND_GRAINS
+ *   SAND_GRAINS=60, tick_leds=delayMinutes*2
+ *   For them to finish together: both use cumulative += timing, no drift.
+ *
+ * Both tick and drop now use start += interval so they stay locked.
  */
-#define TICK_INTERVAL_MS  30000UL   /* 30 seconds per LED */
-/* TICK_LEDS_TOTAL computed at runtime: delayMinutes * 2 */
-
-static uint8_t  tick_remaining  = 0;
-static uint32_t tick_interval   = 0;
-static uint32_t tick_last_ms    = 0;
+static uint8_t  tick_total      = 0;
+static uint32_t tick_total_ms   = 0;
+static uint32_t tick_start_ms   = 0;
 static uint8_t  tick_active     = 0;
 
 static void tick_display_start(void)
 {
-    uint32_t total_ms   = (uint32_t)delayMinutes * 60000UL;
-    tick_remaining      = (uint8_t)(delayMinutes * 2);
-    if (tick_remaining > 120) tick_remaining = 120;
-    /* interval = total_ms / tick_leds — same ratio as drop_interval */
-    tick_interval       = (tick_remaining > 0) ? (total_ms / tick_remaining) : 30000UL;
-    tick_last_ms        = HAL_GetTick();
-    tick_active         = 1;
-    display_led_count(tick_remaining);
+    tick_total_ms   = (uint32_t)delayMinutes * 60000UL;
+    tick_total      = (uint8_t)(delayMinutes * 2);
+    if (tick_total > 120) tick_total = 120;
+    tick_start_ms   = HAL_GetTick();
+    tick_active     = 1;
+    /* Do NOT call display_led_count — matrices show sand */
 }
 
 static void tick_display_stop(void)
@@ -212,50 +208,19 @@ static void tick_display_stop(void)
     tick_active = 0;
 }
 
-/*
- * Call once per main loop iteration.
- * Returns 1 if countdown finished (all LEDs gone).
- */
+/* Purely a time tracker — no display writes.
+ * Sand physics is the visual. Returns 1 at expiry. */
 static uint8_t tick_display_update(void)
 {
     if (!tick_active) return 0;
-    if (tick_remaining == 0) return 1;
-
-    if (HAL_GetTick() - tick_last_ms >= tick_interval) {
-        tick_last_ms += tick_interval;   /* cumulative — no drift */
-        tick_remaining--;
-        display_led_count(tick_remaining);
-        beep_tick();
-
-        if (tick_remaining == 0) {
-            tick_active = 0;
-            return 1;
-        }
-    }
-    return 0;
-}
-
-/* ── Reset button ────────────────────────────────────────────────── */
-static uint8_t check_reset_button(void)
-{
-    static uint32_t pressed_since = 0;
-    static uint8_t  was_down      = 0;
-
-    uint8_t down = (HAL_GPIO_ReadPin(RESET_BTN_PORT, RESET_BTN_PIN) == GPIO_PIN_RESET);
-
-    if (down && !was_down) pressed_since = HAL_GetTick();
-
-    if (down && (HAL_GetTick() - pressed_since >= RESET_HOLD_MS)) {
-        was_down = 0;
-        beep_confirm();
-        hourglass_reset();
-        tick_display_start();
+    if (HAL_GetTick() - tick_start_ms >= tick_total_ms) {
+        tick_active = 0;
         return 1;
     }
-    was_down = down;
     return 0;
 }
 
+/*
 /* USER CODE END 0 */
 
 /**
@@ -306,7 +271,14 @@ int main(void)
     while (LIS3DH_Init(&accel, &hi2c1) == 0)
         led_blink(200);
 
-    gravity = LIS3DH_GetGravityDirection(&accel);
+    /* Sample accelerometer several times over 300ms to let it stabilize.
+     * On power-up the sensor may read flat/zero before settling.
+     * LIS3DH_GetGravityDirection returns dev->gravity (=0) when flat,
+     * so repeated reads ensure we get the real orientation. */
+    for (int i = 0; i < 8; i++) {
+        gravity = LIS3DH_GetGravityDirection(&accel);
+        HAL_Delay(40);
+    }
 
     MAX7219_Test_BlinkAll(&lc);
     delayMinutes = read_pot_minutes();
@@ -325,14 +297,15 @@ int main(void)
 	led_blink(80);
         HAL_Delay(DELAY_FRAME_MS);
 
-//      if (check_reset_button()) continue;
 
         /* --- Pot movement detection → enter setting mode --- */
         uint8_t pot_now = read_pot_minutes();
         if ((pot_now > pot_last ? pot_now - pot_last
                                 : pot_last - pot_now) > POT_DEADBAND) {
             tick_display_stop();
+            /* pot_setting_mode clears both matrices on entry and on each move */
             pot_setting_mode();
+            /* After confirm: reset hourglass with new time, restart tick */
             hourglass_reset();
             tick_display_start();
             pot_last = delayMinutes;
@@ -351,7 +324,7 @@ int main(void)
             gravity = new_grav;
             if (delta == 180) {
                 hourglass_flip();
-                tick_display_start();  /* restart countdown on flip */
+                tick_display_start();
                 continue;
             }
         }
@@ -360,8 +333,8 @@ int main(void)
         uint8_t moved   = hourglass_update();
         uint8_t dropped = hourglass_drop();
 
-        /* --- Alarm: fire only when all grains have drained from top matrix --- */
-        if (!moved && !dropped && !alarmWentOff) {
+        /* --- Alarm: fire only when all grains drained AND past grace period --- */
+        if (!alarmWentOff && hourglass_settled()) {
             if (hourglass_count(hourglass_top_matrix()) == 0) {
                 alarmWentOff = true;
                 beep_alarm();
