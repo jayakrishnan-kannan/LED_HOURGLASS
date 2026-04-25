@@ -148,7 +148,7 @@ static uint32_t drop_interval_ms(void)
 uint8_t hourglass_top_matrix(void)
 { return (gravity == 180) ? MATRIX_B : MATRIX_A; }
 
-static uint8_t hourglass_bottom_matrix(void)
+uint8_t hourglass_bottom_matrix(void)
 { return (hourglass_top_matrix() == MATRIX_A) ? MATRIX_B : MATRIX_A; }
 
 typedef struct { uint8_t x; uint8_t y; } Pix;
@@ -189,9 +189,6 @@ uint8_t hourglass_drop(void)
     {
         MAX7219_SetXY(&lc, top, ex.x, ex.y, 0);
         MAX7219_SetXY(&lc, bot, en.x, en.y, 1);
-        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
-        HAL_Delay(4);
-        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
         return 1;
     }
     return 0;
@@ -232,6 +229,29 @@ static void fill_B(uint8_t count)
     }
 }
 
+void display_led_count(uint8_t count)
+{
+    if (count > 120) count = 120;
+
+    /* MATRIX_A: lit pixels = min(count, 60) */
+    uint8_t a_count = (count >= 60) ? 60 : count;
+//    MAX7219_ClearDisplay(&lc, MATRIX_A);
+    for (uint8_t i = 0; i < a_count; i++)
+        MAX7219_SetXY(&lc, MATRIX_A, i % 8, i / 8, 1);
+
+    /* MATRIX_B: lit pixels = count beyond 60 */
+    uint8_t b_count = (count > 60) ? (count - 60) : 0;
+//    MAX7219_ClearDisplay(&lc, MATRIX_B);
+    for (uint8_t i = 0; i < b_count; i++)
+        MAX7219_SetXY(&lc, MATRIX_B, i % 8, i / 8, 1);
+}
+void clear_displays(void)
+{
+	MAX7219_ClearDisplay(&lc, MATRIX_B);
+	MAX7219_ClearDisplay(&lc, MATRIX_A);
+	HAL_Delay(50);
+}
+
 uint8_t hourglass_count(uint8_t addr)
 {
     uint8_t c = 0;
@@ -262,9 +282,9 @@ void hourglass_reset(void)
 void alarm_trigger(void)
 {
     for (int i = 0; i < 5; i++) {
-        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
         HAL_Delay(200);
-        HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
         HAL_Delay(600);
     }
 }

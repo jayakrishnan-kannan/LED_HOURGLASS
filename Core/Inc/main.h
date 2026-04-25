@@ -58,6 +58,7 @@ extern uint8_t          delayHours, delayMinutes;
 extern int              gravity;
 extern bool             alarmWentOff;
 extern NonBlockDelay_t  drop_delay;
+extern uint16_t ADC_value;
 
 /* USER CODE END EC */
 
@@ -67,9 +68,6 @@ extern NonBlockDelay_t  drop_delay;
 #define CS_PIN              GPIO_PIN_4
 #define CS_PIN_Pin          GPIO_PIN_4
 #define CS_PIN_GPIO_Port    GPIOA
-
-#define BUZZER_PORT         GPIOB
-#define BUZZER_PIN          GPIO_PIN_0
 
 #define RESET_BTN_PORT      GPIOB
 #define RESET_BTN_PIN       GPIO_PIN_1
@@ -97,6 +95,8 @@ extern NonBlockDelay_t  drop_delay;
 #define SHAKE_COUNT     2
 /* USER CODE END EM */
 
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
+
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -108,13 +108,20 @@ uint8_t  hourglass_update(void);
 uint8_t  hourglass_drop(void);
 uint8_t  hourglass_count(uint8_t addr);
 uint8_t  hourglass_top_matrix(void);
+uint8_t  hourglass_bottom_matrix(void);
+void     display_led_count(uint8_t count);
+void 	 clear_displays(void);
 void     alarm_trigger(void);
 void     Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define BUZZER_Pin GPIO_PIN_0
+#define BUZZER_GPIO_Port GPIOA
 #define CS_PIN_Pin GPIO_PIN_4
 #define CS_PIN_GPIO_Port GPIOA
+#define potentiometer_Pin GPIO_PIN_1
+#define potentiometer_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
