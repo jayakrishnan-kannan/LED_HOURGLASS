@@ -191,16 +191,19 @@ static void pot_setting_mode(void)
 /* TICK_LEDS_TOTAL computed at runtime: delayMinutes * 2 */
 
 static uint8_t  tick_remaining  = 0;
+static uint32_t tick_interval   = 0;
 static uint32_t tick_last_ms    = 0;
 static uint8_t  tick_active     = 0;
 
 static void tick_display_start(void)
 {
-    /* 1 LED = 30 sec → 2 LEDs per minute */
-    tick_remaining = (uint8_t)(delayMinutes * 2);
+    uint32_t total_ms   = (uint32_t)delayMinutes * 60000UL;
+    tick_remaining      = (uint8_t)(delayMinutes * 2);
     if (tick_remaining > 120) tick_remaining = 120;
-    tick_last_ms   = HAL_GetTick();
-    tick_active    = 1;
+    /* interval = total_ms / tick_leds — same ratio as drop_interval */
+    tick_interval       = (tick_remaining > 0) ? (total_ms / tick_remaining) : 30000UL;
+    tick_last_ms        = HAL_GetTick();
+    tick_active         = 1;
     display_led_count(tick_remaining);
 }
 
@@ -218,8 +221,8 @@ static uint8_t tick_display_update(void)
     if (!tick_active) return 0;
     if (tick_remaining == 0) return 1;
 
-    if (HAL_GetTick() - tick_last_ms >= TICK_INTERVAL_MS) {
-        tick_last_ms += TICK_INTERVAL_MS;
+    if (HAL_GetTick() - tick_last_ms >= tick_interval) {
+        tick_last_ms += tick_interval;   /* cumulative — no drift */
         tick_remaining--;
         display_led_count(tick_remaining);
         beep_tick();
@@ -338,11 +341,7 @@ int main(void)
         pot_last = pot_now;
 
         /* --- Tick countdown display --- */
-        if (tick_display_update()) {
-            /* All LEDs gone — timer expired */
-            beep_alarm();
-            /* Restart automatically or wait for flip/reset */
-        }
+        tick_display_update();
 
         /* --- Gravity / flip --- */
         int new_grav = LIS3DH_GetGravityDirection(&accel);
@@ -358,8 +357,16 @@ int main(void)
         }
 
         /* --- Sand physics --- */
-        hourglass_update();
-        hourglass_drop();
+        uint8_t moved   = hourglass_update();
+        uint8_t dropped = hourglass_drop();
+
+        /* --- Alarm: fire only when all grains have drained from top matrix --- */
+        if (!moved && !dropped && !alarmWentOff) {
+            if (hourglass_count(hourglass_top_matrix()) == 0) {
+                alarmWentOff = true;
+                beep_alarm();
+            }
+        }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
