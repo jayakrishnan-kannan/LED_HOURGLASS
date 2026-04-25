@@ -86,7 +86,7 @@ extern NonBlockDelay_t  drop_delay;
 #define MATRIX_B_ROTATION  ROTATION_90    /* MATRIX_B rotation (180° from A) */
 
 /* ── Physics constants ─────��─────────────��───────────────────────── */
-#define SAND_GRAINS     36u   /* grains per chamber (≤ 64)   */
+#define SAND_GRAINS     60u   /* grains per chamber (≤ 64)   */
 #define DELAY_FRAME_MS  80u   /* main-loop period ms          */
 #define DEFAULT_HOURS   0u
 #define DEFAULT_MINUTES 1u
@@ -94,7 +94,7 @@ extern NonBlockDelay_t  drop_delay;
 /* ── Reset thresholds ────────────────────────────────────────────── */
 #define RESET_HOLD_MS   1500u
 #define SHAKE_THRESHOLD 2000
-#define SHAKE_COUNT     5
+#define SHAKE_COUNT     2
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/

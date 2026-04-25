@@ -170,15 +170,7 @@ int main(void)
 
   gravity = LIS3DH_GetGravityDirection(&accel);
   MAX7219_Test_BlinkAll(&lc);
-//  if(gravity==0)
-//  {
-//	  MAX7219_SetXY(&lc, MATRIX_A, 4,4,1);
-//  }
-//  else if(gravity==180)
-//  {
-//	  MAX7219_SetXY(&lc, MATRIX_A, 7,0,10);
-//  }
-//while(1);
+
 
 //  fills grains near the neck for the matrix on top
   hourglass_reset();
@@ -195,7 +187,7 @@ int main(void)
       HAL_Delay(DELAY_FRAME_MS);
 
 //      if (check_reset_button()) continue;
-//      if (check_shake())        continue;
+      if (check_shake())        continue;
 
       int new_grav = LIS3DH_GetGravityDirection(&accel);
       if (new_grav != gravity) {
@@ -211,7 +203,6 @@ int main(void)
 
       uint8_t moved   = hourglass_update();
       uint8_t dropped = hourglass_drop();
-//      uint8_t dropped = 0;
 
       if (!moved && !dropped) {
           if (hourglass_count(hourglass_top_matrix()) == 0) {
